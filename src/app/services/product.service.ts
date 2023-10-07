@@ -9,22 +9,55 @@ import { Product } from '../products/product.interface';
 export class ProductService {
 
   private baseUrl = 'https://storerestservice.azurewebsites.net/api/products/';
-  products$: Observable<Product[]>;
+  private productsSubject = new BehaviorSubject<Product[]>([]);
+  products$: Observable<Product[]> = this.productsSubject.asObservable();
+  mostExpensiveProduct$: Observable<Product>;
+  productsToLoad: number = 10;
 
   constructor(private http: HttpClient) {
     this.initProducts();
+    this.initMostExpensiveProduct();
   }
 
-  initProducts() {
-    let url:string = this.baseUrl + `?$orderby=ModifiedDate%20desc`;
-
-    this.products$ = this
-                      .http
-                      .get<Product[]>(url)
+  private initMostExpensiveProduct() {
+    this.mostExpensiveProduct$ =
+      this
+      .products$
+      .pipe(
+        filter(products => products.length > 0),
+        switchMap(
+          products => of(products)
                       .pipe(
-                        delay(1500),
-                        tap(console.table)
-                      );
+                        map(products => [...products].sort((p1, p2) => p1.price > p2.price ? -1 : 1)),
+                        // [{p1}, {p2}, {p3}]
+                        mergeAll(),
+                        // {p1}, {p2}, {p3}
+                        first()
+                      )
+        )
+      )
+  }
+
+  initProducts(skip = 0, take = this.productsToLoad) {
+    let url = this.baseUrl + `?$skip=${skip}&$top=${take}&$orderby=ModifiedDate%20desc`;
+
+    this
+      .http
+      .get<Product[]>(url)
+      .pipe(
+        delay(1500), // just for demo!
+        tap(console.table),
+        shareReplay(),
+        map(
+          newProducts => {
+            let currentProducts = this.productsSubject.value;
+            return currentProducts.concat(newProducts);
+          }
+        )
+      )
+      .subscribe(
+        fullProductsList => this.productsSubject.next(fullProductsList)
+      );
   }
 
   insertProduct(newProduct: Product): Observable<Product> {
@@ -36,6 +69,7 @@ export class ProductService {
   }
 
   resetList() {
+    this.productsSubject.next([]);
     this.initProducts();
   }
 }
